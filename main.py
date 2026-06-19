@@ -2,27 +2,23 @@ import os
 import threading
 import json
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from telegram import ReplyKeyboardMarkup
+from telegram import ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
-# خواندن متغیرها از تنظیمات Railway
 TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_ID = os.getenv("ADMIN_ID")
+ADMIN_ID = "5989298023" # آیدی ادمین شما
 BOT_USERNAME = "bombdaramadbot"
-
 DB_FILE = "users_db.json"
+WITHDRAW_FILE = "withdraws.json"
 
-def load_db():
-    if os.path.exists(DB_FILE):
-        try:
-            with open(DB_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except:
-            return {}
+def load_json(file):
+    if os.path.exists(file):
+        with open(file, "r", encoding="utf-8") as f:
+            return json.load(f)
     return {}
 
-def save_db(data):
-    with open(DB_FILE, "w", encoding="utf-8") as f:
+def save_json(file, data):
+    with open(file, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
 
 class RailwayHealthCheck(BaseHTTPRequestHandler):
@@ -30,63 +26,58 @@ class RailwayHealthCheck(BaseHTTPRequestHandler):
         self.send_response(200)
         self.end_headers()
         self.wfile.write(b"Bot is Active!")
-    def log_message(self, format, *args):
-        return  
+    def log_message(self, format, *args): return
 
 def start_health_server():
     port = int(os.getenv("PORT", 8080))
-    server = HTTPServer(("0.0.0.0", port), RailwayHealthCheck)
-    server.serve_forever()
+    HTTPServer(("0.0.0.0", port), RailwayHealthCheck).serve_forever()
 
-def get_main_keyboard():
-    return ReplyKeyboardMarkup([
-        ["💎 شروع کسب درآمد 💎"],
-        ["🏠 حساب کاربری", "🌟 برترین کاربران"],
-        ["💸 برداشت از حساب", "📊 تاریخچه برداشت"],
-        ["📜 قوانین", "📞 پشتیبانی", "📚 راهنما"]
-    ], resize_keyboard=True)
-
-async def start_command(update, context):
+async def start(update, context):
     user = update.effective_user
-    user_id = str(user.id)
-    db = load_db()
-
-    if user_id not in db:
-        db[user_id] = {"balance": 0, "invited_by": None, "invites_count": 0, "username": user.first_name}
-        if context.args:
-            inviter_id = context.args[0]
-            if inviter_id in db and inviter_id != user_id:
-                db[user_id]["invited_by"] = inviter_id
-                db[inviter_id]["balance"] += 120000
-                db[inviter_id]["invites_count"] += 1
-                try: await context.bot.send_message(chat_id=int(inviter_id), text="🎉 یک کاربر جدید دعوت کردی!")
-                except: pass
-        save_db(db)
+    db = load_json(DB_FILE)
+    if str(user.id) not in db:
+        db[str(user.id)] = {"balance": 0, "invites": 0, "username": user.first_name}
+        save_json(DB_FILE, db)
     
-    await update.message.reply_text("به ربات بمب خوش آمدید 🌹", reply_markup=get_main_keyboard())
+    kb = ReplyKeyboardMarkup([["💎 شروع کسب درآمد 💎"], ["🏠 حساب کاربری", "💸 برداشت از حساب"]], resize_keyboard=True)
+    await update.message.reply_text("به ربات خوش آمدید!", reply_markup=kb)
+
+async def admin_panel(update, context):
+    if str(update.effective_user.id) != ADMIN_ID: return
+    withdraws = load_json(WITHDRAW_FILE)
+    if not withdraws:
+        await update.message.reply_text("هیچ درخواست برداشتی وجود ندارد.")
+        return
+    msg = "لیست درخواست‌های برداشت:\n\n"
+    for uid, info in withdraws.items():
+        msg += f"👤 کاربر: {uid} | 💰 مبلغ: {info['amount']} تومان\n"
+    await update.message.reply_text(msg)
 
 async def handle_message(update, context):
     text = update.message.text
+    user_id = str(update.effective_user.id)
+    
     if "شروع کسب درآمد" in text:
-        user_id = update.effective_user.id
-        await update.message.reply_text(f"👇 با هر دعوت ۱۲۰,۰۰۰ تومان میده 👇\nhttps://t.me/{BOT_USERNAME}?start={user_id}")
+        await update.message.reply_text(f"لینک دعوت:\nhttps://t.me/{BOT_USERNAME}?start={user_id}")
     elif "حساب کاربری" in text:
-        db = load_db()
-        bal = db.get(str(update.effective_user.id), {}).get("balance", 0)
-        await update.message.reply_text(f"موجودی شما: {bal:,} تومان")
-    else:
-        await update.message.reply_text("در حال حاضر در دست توسعه...")
+        db = load_json(DB_FILE)
+        bal = db.get(user_id, {}).get("balance", 0)
+        await update.message.reply_text(f"موجودی: {bal} تومان")
+    elif "برداشت از حساب" in text:
+        await update.message.reply_text("لطفا مبلغ برداشت را به صورت عددی بفرستید:")
+        context.user_data['waiting_withdraw'] = True
+    elif context.user_data.get('waiting_withdraw'):
+        amount = text
+        withdraws = load_json(WITHDRAW_FILE)
+        withdraws[user_id] = {"amount": amount}
+        save_json(WITHDRAW_FILE, withdraws)
+        context.user_data['waiting_withdraw'] = False
+        await update.message.reply_text("درخواست شما ثبت شد.")
 
 if __name__ == "__main__":
-    # اجرای وب‌سرور برای زنده نگه داشتن رایلی
     threading.Thread(target=start_health_server, daemon=True).start()
-    
-    # ساخت اپلیکیشن
     app = Application.builder().token(TOKEN).build()
-    
-    # هندلرها
-    app.add_handler(CommandHandler("start", start_command))
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("admin", admin_panel))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    
-    # اجرا با پاکسازی پیام‌های قدیمی
     app.run_polling(drop_pending_updates=True)
