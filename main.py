@@ -2,10 +2,10 @@ import os
 import threading
 import json
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from telegram import ReplyKeyboardMarkup, KeyboardButton
+from telegram import ReplyKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
-# خواندن متغیرها از تنظیمات Railway (بخش Variables)
+# خواندن متغیرها از تنظیمات Railway
 TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = os.getenv("ADMIN_ID")
 BOT_USERNAME = "bombdaramadbot"
@@ -52,7 +52,7 @@ async def start_command(update, context):
     db = load_db()
 
     if user_id not in db:
-        db[user_id] = {"balance": 0, "invited_by": None, "invites_count": 0, "username": user.first_name, "step": "none"}
+        db[user_id] = {"balance": 0, "invited_by": None, "invites_count": 0, "username": user.first_name}
         if context.args:
             inviter_id = context.args[0]
             if inviter_id in db and inviter_id != user_id:
@@ -78,8 +78,15 @@ async def handle_message(update, context):
         await update.message.reply_text("در حال حاضر در دست توسعه...")
 
 if __name__ == "__main__":
+    # اجرای وب‌سرور برای زنده نگه داشتن رایلی
     threading.Thread(target=start_health_server, daemon=True).start()
+    
+    # ساخت اپلیکیشن
     app = Application.builder().token(TOKEN).build()
+    
+    # هندلرها
     app.add_handler(CommandHandler("start", start_command))
-    app.add_handler(MessageHandler(filters.TEXT, handle_message))
-    app.run_polling()
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    
+    # اجرا با پاکسازی پیام‌های قدیمی
+    app.run_polling(drop_pending_updates=True)
